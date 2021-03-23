@@ -1,0 +1,8 @@
+attributes:
+- username
+- email
+- firstName
+- lastName
+- accountStatus
+baseurl: https://[PUT YOUR DATACENTER ID HERE].qualtrics.com/API/v3
+token: [PUT YOUR API TOKEN HERE]
