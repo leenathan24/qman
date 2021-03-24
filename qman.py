@@ -11,9 +11,8 @@ Options:
     -h, --help                     Display this help message
     -u <id>, --user=<id>           Qualtrics UserID
     -f <path>, --file=<path>       Input file
-    -c <path>, --config=<path>     Path to Qualtrics API configuration file
     --raw                          Disable output formatting
-    --test-connection              Test API connection to Qualtrics
+    --test-connection              Test connection to Qualtrics
 """
 
 import os
@@ -148,8 +147,6 @@ def test_connection():
 if __name__ == '__main__':
     args = docopt(doc=__doc__, argv=sys.argv[1:])
 
-    if args['--config']:
-        CONFIG_PATH = Path(args['--config'])
     CONFIG = get_config(CONFIG_PATH)
 
     if args['--test-connection']:
