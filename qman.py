@@ -2,17 +2,16 @@
 
 """
 Usage:
-    qman --help
     qman setup
     qman whoami
-    qman [options] (info|status|enable|disable) -u <id>...
-    qman [options] (info|status|enable|disable) -f <path>
+    qman [options] (info|status|enable|disable|delete) -u <id>...
+    qman [options] (info|status|enable|disable|delete) -f <path>
 
 Options:
     -h, --help                     Display this help message
     -u <id>, --user=<id>           Qualtrics UserID
     -f <path>, --file=<path>       Input file
-    --raw                          Disable output formatting
+    --no-filter                    Disable attribute filtering
 """
 
 import os
@@ -100,6 +99,20 @@ class QualtricsManager:
                 users += response.json()['result']['elements']
             return users
 
+    # TODO
+    def create_user(self, username, passwd, fname, lname, email, usertype, lang):
+        pass
+
+    def delete_user(self, userid):
+        """Delete a Qualtrics user.
+
+        Args:
+            userid (str): Qualtrics user ID
+        """
+        
+        response = self.session.delete(f"{self.baseurl}/users/{userid}")
+        response.raise_for_status()
+
     def enable_user(self, userid):
         """Enable a Qualtrics user.
 
@@ -108,8 +121,7 @@ class QualtricsManager:
         """
 
         response = self.session.put(f"{self.baseurl}/users/{userid}",
-                                    headers={
-                                        'Content-Type': 'application/json'},
+                                    headers={'Content-Type': 'application/json'},
                                     data="{\"status\": \"active\"}"
                                     )
         response.raise_for_status()
@@ -146,9 +158,11 @@ if __name__ == '__main__':
 
     args = docopt(doc=__doc__, argv=sys.argv[1:])
 
+    # Get/create config
     if not CONFIG_PATH.exists() or args['setup']:
         print("Performing initial setup...")
         sleep(1)
+        print('\n')
         setup()
         if args['setup']:
             sys.exit(0)
@@ -167,47 +181,41 @@ if __name__ == '__main__':
         assert infile.exists()
         users = [u.strip() for u in infile.open().readlines()]
     else:
-        raise Exception('User(s) must be provided using either --user or --file parameter.')
+        raise Exception("User(s) must be provided using either --user or --file parameter.")
 
     result = {}
 
-    if args['info']:
-        try:
+    try:
+        if args['info']:
             for user in users:
                 response = mgr.users(user)
-                if args['--raw']:
+                if args['--no-filter']:
                     result[user] = response
                 else:
                     result[user] = {x: response[x] for x in CONFIG['filter']}
-        except requests.HTTPError as err:
-            result[user] = str(err)
-        pprint(result)
-
-    elif args['status']:
-        try:
+        elif args['status']:
             for user in users:
                 response = mgr.users(user)
                 result[user] = response['accountStatus']
-        except requests.HTTPError as err:
-            result[user] = str(err)
-        pprint(result)
-
-    elif args['enable']:
-        try:
+        elif args['enable']:
             for user in users:
                 mgr.enable_user(user)
-        except requests.HTTPError as err:
-            result[user] = str(err)
-        if result:
-            pprint(result)
-
-    elif args['disable']:
-        try:
+        elif args['disable']:
             for user in users:
                 mgr.disable_user(user)
-        except requests.HTTPError as err:
-            result[user] = str(err)
-        if result:
-            pprint(result)
+        elif args['delete']:
+            answer = input("You are about to DELETE one or more users. Are you sure you want to do this? [y/n]: ").lower()
+            while answer not in ['y', 'yes', 'n', 'no']:
+                answer = input("Please answer with 'y', 'yes', 'n', or 'no': ")
+            if answer in ['y', 'yes']:
+                for user in users:
+                    mgr.delete_user(user)
+            else:
+                print('No actions taken.')
+    except requests.HTTPError as err:
+        pprint(err)
+        result[user] = str(err)
+    if result:
+        pprint(result)
 
     sys.exit(0)
