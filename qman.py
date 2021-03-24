@@ -3,7 +3,8 @@
 """
 Usage:
     qman --help
-    qman --test-connection
+    qman setup
+    qman whoami
     qman [options] (info|status|enable|disable) -u <id>...
     qman [options] (info|status|enable|disable) -f <path>
 
@@ -12,7 +13,6 @@ Options:
     -u <id>, --user=<id>           Qualtrics UserID
     -f <path>, --file=<path>       Input file
     --raw                          Disable output formatting
-    --test-connection              Test connection to Qualtrics
 """
 
 import os
@@ -20,6 +20,8 @@ import sys
 import requests
 import json
 import yaml
+from getpass import getpass
+from time import sleep
 from pprint import pprint
 from pathlib import Path
 from docopt import docopt
@@ -39,118 +41,123 @@ def get_config(config_path):
     """
 
     with config_path.open() as config_file:
-        config = yaml.load(config_file, Loader=yaml.FullLoader)
+        config = yaml.safe_load(config_file)
     return config
 
 
-def get_user(userid):
-    """Retrieve information about a Qualtrics user.
+def setup():
+    baseurl = input("Base URL: ")
+    token = getpass("API Token (input will not be shown): ")
+    attr_filter = ['username', 'email', 'firstName', 'lastName', 'accountStatus']
+    with CONFIG_PATH.open('w') as f:
+        yaml_config = yaml.dump({'baseurl': baseurl, 'token': token, 'filter': attr_filter}, f)
+    print(f"Setup completed. Default attribute filter set to {attr_filter}. Configurations can be modified as needed by editing the {CONFIG_PATH.name} file.")
 
-    The --raw flag can be passed from command line to show all user data (this will be a lot).
+class QualtricsManager:
 
-    Args:
-        userid (str): Qualtrics user ID
+    def __init__(self, baseurl, token):
+        """QualtricsManager class init method.
 
-    Returns:
-        dict: User information
-    """
+        Args:
+            baseurl (str): https://[DATACENTER].qualtrics.com/API/v3
+            token (str): Qualtrics API token
+        """
 
-    response = requests.get(
-        url=f"{CONFIG['baseurl']}/users/{userid}",
-        headers={'X-API-TOKEN': f"{CONFIG['token']}"}
-    )
-    response.raise_for_status()
-    return json.loads(response.text)['result']
+        self.baseurl = baseurl
+        self.session = requests.Session()
+        self.session.headers.update({'X-API-TOKEN': token})
 
+    def whoami(self):
+        """Send request to whoami endpoint and return result.
 
-def enable_user(userid):
-    """Enable a Qualtrics user.
+        Returns:
+            Python object decoded from JSON response, typically a dict.
+        """
 
-    Args:
-        userid (str): Qualtrics user ID
-    """
+        response = self.session.get(f"{self.baseurl}/whoami")
+        return json.loads(response.text)
 
-    response = requests.put(
-        url=f"{CONFIG['baseurl']}/users/{userid}",
-        headers={
-            'X-API-TOKEN': f"{CONFIG['token']}", 
-            'Content-Type': 'application/json'
-        },
-        data="{\"status\": \"active\"}"
-    )
-    response.raise_for_status()
+    def users(self, userid=None):
+        """Retrieve a particular user, or all users.
 
+        Args:
+            userid (str, optional): Qualtrics user ID. Defaults to None.
 
-def disable_user(userid):
-    """Disable a Qualtrics user.
+        Returns: dict for single user, list for all users
+        """
 
-    Args:
-        userid (str): Qualtrics user ID
-    """
+        if userid:
+            response = self.session.get(f"{self.baseurl}/users/{userid}")
+            response.raise_for_status()
+            return json.loads(response.text)['result']
+        else:
+            users = []
+            request_url = f"{self.baseurl}/users"
+            while request_url:
+                response = self.session.get(request_url)
+                response.raise_for_status()
+                request_url = response.json()['result']['nextPage']
+                users += response.json()['result']['elements']
+            return users
 
-    response = requests.put(
-        url=f"{CONFIG['baseurl']}/users/{userid}",
-        headers={
-            'X-API-TOKEN': f"{CONFIG['token']}", 
-            'Content-Type': 'application/json'
-        },
-        data="{\"status\": \"disabled\"}"
-    )
-    response.raise_for_status()
+    def enable_user(self, userid):
+        """Enable a Qualtrics user.
 
+        Args:
+            userid (str): Qualtrics user ID
+        """
 
-def is_enabled(userid):
-    """Check if given user ID is active.
-
-    Args:
-        userid (str): Qualtrics user ID
-
-    Returns:
-        bool: True if enabled, False otherwise
-    """
-
-    response = get_user(userid)
-    return True if response['accountStatus'] == 'active' else False
-
-
-def get_all_users():
-    """Retrieve all users regardless of status.
-
-    Returns:
-        list: User information
-    """
-
-    users = []
-    request_url = CONFIG['baseurl'] + '/users'
-    while request_url:
-        response = requests.get(
-            url=request_url,
-            headers={'X-API-TOKEN': f"{CONFIG['token']}"}
-        )
+        response = self.session.put(f"{self.baseurl}/users/{userid}",
+                                    headers={
+                                        'Content-Type': 'application/json'},
+                                    data="{\"status\": \"active\"}"
+                                    )
         response.raise_for_status()
-        request_url = response.json()['result']['nextPage']
-        users += response.json()['result']['elements']
-    return users        
 
+    def disable_user(self, userid):
+        """Disable a Qualtrics user.
 
-def test_connection():
-    """Test connection to Qualtrics via API.
-    """
+        Args:
+            userid (str): Qualtrics user ID
+        """
 
-    response = requests.get(
-        url=f"{CONFIG['baseurl']}/whoami",
-        headers={'X-API-TOKEN': f"{CONFIG['token']}"}
-    )
-    pprint(json.loads(response.text))
+        response = self.session.put(f"{self.baseurl}/users/{userid}",
+                                    headers={
+                                        'Content-Type': 'application/json'},
+                                    data="{\"status\": \"disabled\"}"
+                                    )
+        response.raise_for_status()
+
+    def user_enabled(userid):
+        """Check if given user ID is active.
+
+        Args:
+            userid (str): Qualtrics user ID
+
+        Returns:
+            bool: True if enabled, False otherwise
+        """
+
+        response = get_user(userid)
+        return True if response['accountStatus'] == 'active' else False
 
 
 if __name__ == '__main__':
+
     args = docopt(doc=__doc__, argv=sys.argv[1:])
 
+    if not CONFIG_PATH.exists() or args['setup']:
+        print("Performing initial setup...")
+        sleep(1)
+        setup()
+        if args['setup']:
+            sys.exit(0)
     CONFIG = get_config(CONFIG_PATH)
 
-    if args['--test-connection']:
-        test_connection()
+    mgr = QualtricsManager(CONFIG['baseurl'], CONFIG['token'])
+
+    if args['whoami']:
+        pprint(mgr.whoami())
         sys.exit(0)
 
     if args['--user']:
@@ -160,42 +167,44 @@ if __name__ == '__main__':
         assert infile.exists()
         users = [u.strip() for u in infile.open().readlines()]
     else:
-        raise Exception(
-            'User(s) must be provided using either --user or --file parameter.')
+        raise Exception('User(s) must be provided using either --user or --file parameter.')
 
     result = {}
 
     if args['info']:
         try:
             for user in users:
-                response = get_user(user)
+                response = mgr.users(user)
                 if args['--raw']:
                     result[user] = response
                 else:
-                    result[user] = {x: response[x] for x in CONFIG['attributes']}
+                    result[user] = {x: response[x] for x in CONFIG['filter']}
         except requests.HTTPError as err:
             result[user] = str(err)
         pprint(result)
+
     elif args['status']:
         try:
             for user in users:
-                response = get_user(user)
+                response = mgr.users(user)
                 result[user] = response['accountStatus']
         except requests.HTTPError as err:
             result[user] = str(err)
         pprint(result)
+
     elif args['enable']:
         try:
             for user in users:
-                enable_user(user)
+                mgr.enable_user(user)
         except requests.HTTPError as err:
             result[user] = str(err)
         if result:
             pprint(result)
+
     elif args['disable']:
         try:
             for user in users:
-                disable_user(user)
+                mgr.disable_user(user)
         except requests.HTTPError as err:
             result[user] = str(err)
         if result:
